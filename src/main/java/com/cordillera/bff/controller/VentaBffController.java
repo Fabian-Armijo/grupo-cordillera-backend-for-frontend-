@@ -18,6 +18,13 @@ public class VentaBffController {
     @Autowired
     private VentasBffService vBffService;
 
+    // --- ESTE ES EL MÉTODO QUE TE FALTABA ---
+    // Responde a GET http://localhost:8090/bff/ventas
+    @GetMapping
+    public ResponseEntity<List<VentaResponseDto>> listarTodas() {
+        return ResponseEntity.ok(vBffService.listarTodasLasVentas());
+    }
+
     @PostMapping("/confirmar")
     public ResponseEntity<VentaResponseDto> confirmarVenta(@RequestBody VentaRequestDto request) {
         return ResponseEntity.ok(vBffService.procesarVenta(request));
