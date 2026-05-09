@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 public class CatalogoBffService {
@@ -23,29 +24,24 @@ public class CatalogoBffService {
     @Autowired
     private StockClient stockClient;
 
+    // EL MÉTODO QUE YA TENÍAS
     public CatalogoDashboardDTO obtenerVistaCatalogo(Long productoId) {
-        // 1. Buscamos el Producto
         ProductoResponseDTO producto = productoClient.obtenerProductoPorId(productoId);
 
-        // 2. Con el categoriaId del producto, buscamos el nombre de la Categoría
         String nombreCat = "Sin Categoría";
         if (producto.getCategoriaId() != null) {
             try {
                 nombreCat = categoriaClient.obtenerCategoriaPorId(producto.getCategoriaId()).getNombre();
             } catch (Exception e) {
-                nombreCat = "Categoría no disponible"; // Fallback simple
+                nombreCat = "Categoría no disponible";
             }
         }
 
-        // 3. Buscamos todo el stock de ese producto en todas las sucursales
         List<StockResponseDTO> stocks = stockClient.obtenerStockPorProducto(productoId);
-
-        // 4. Sumamos el stock de todas las sucursales para mostrar un "Stock Total"
         int stockTotal = stocks.stream()
                 .mapToInt(StockResponseDTO::getCantidadDisponible)
                 .sum();
 
-        // 5. Ensamblamos el DTO final a la medida del Frontend
         return CatalogoDashboardDTO.builder()
                 .sku(producto.getSku())
                 .nombreProducto(producto.getNombre())
@@ -53,5 +49,49 @@ public class CatalogoBffService {
                 .nombreCategoria(nombreCat)
                 .stockTotalDisponible(stockTotal)
                 .build();
+    }
+
+    // --- NUEVO MÉTODO PARA EL LISTADO COMPLETO ---
+    public List<CatalogoDashboardDTO> listarCatalogoCompleto() {
+        // 1. Obtenemos la lista completa de productos desde el microservicio de productos
+        // Nota: Asegúrate de tener este método definido en tu ProductoClient
+        List<ProductoResponseDTO> productos = productoClient.obtenerTodosLosProductos();
+
+        // 2. Transformamos cada ProductoResponseDTO en un CatalogoDashboardDTO
+        return productos.stream().map(producto -> {
+
+            // A. Buscamos la categoría de este producto específico
+            String nombreCat = "Sin Categoría";
+            if (producto.getCategoriaId() != null) {
+                try {
+                    nombreCat = categoriaClient.obtenerCategoriaPorId(producto.getCategoriaId()).getNombre();
+                } catch (Exception e) {
+                    nombreCat = "Categoría no disponible";
+                }
+            }
+
+            // B. Buscamos y sumamos el stock de este producto en las distintas sucursales
+            int stockTotal = 0;
+            try {
+                List<StockResponseDTO> stocks = stockClient.obtenerStockPorProducto(producto.getId()); // Asumiendo que producto tiene getId()
+                stockTotal = stocks.stream()
+                        .mapToInt(StockResponseDTO::getCantidadDisponible)
+                        .sum();
+            } catch (Exception e) {
+                // Si el microservicio de stock cae, devolvemos 0 en lugar de romper toda la tabla
+            }
+
+            // C. Ensamblamos el DTO para el frontend
+            return CatalogoDashboardDTO.builder()
+                    // Asegúrate de mapear los campos extra que pusimos en React si los agregas a tu DTO en Java
+                    // (ej. id, descripcion, costo, activo)
+                    .sku(producto.getSku())
+                    .nombreProducto(producto.getNombre())
+                    .precio(producto.getPrecio())
+                    .nombreCategoria(nombreCat)
+                    .stockTotalDisponible(stockTotal)
+                    .build();
+
+        }).collect(Collectors.toList());
     }
 }
