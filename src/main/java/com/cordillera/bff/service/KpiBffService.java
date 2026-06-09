@@ -26,51 +26,50 @@ public class KpiBffService {
     private VentasClient ventasClient;
 
     public List<Map<String, Object>> getKpisForDashboard() {
-        // 1. Obtener todas las definiciones de KPIs desde el ms-kpi
         List<Map<String, Object>> definiciones = kpiClient.obtenerTodosLosKpis();
+
+        // 🌟 OPTIMIZACIÓN: Variables para calcular ventas UNA SOLA VEZ
+        double sumaTotalVentasGlobal = 0.0;
+        boolean ventasYaCalculadas = false;
 
         for (Map<String, Object> definicion : definiciones) {
             String nombreKpi = (String) definicion.get("nombre");
 
-            // Log para debuggear el nombre en consola
-            System.out.println("DEBUG: Procesando KPI: " + nombreKpi);
-
-            // 2. Lógica para KPI de Ventas (Automatizado)
+            // Verificamos si el nombre contiene "ventas"
             if (nombreKpi != null && nombreKpi.toLowerCase().contains("ventas")) {
-                try {
-                    List<VentaResponseDto> ventas = ventasClient.listarVentas();
 
-                    double sumaTotal = 0.0;
-                    if (ventas != null) {
-                        sumaTotal = ventas.stream()
-                                .filter(v -> v != null && v.getMontoTotal() != null)
-                                .mapToDouble(v -> v.getMontoTotal().doubleValue())
-                                .sum();
+                // Si es el primer KPI de ventas que encontramos, vamos al ms-ventas
+                if (!ventasYaCalculadas) {
+                    try {
+                        List<VentaResponseDto> ventas = ventasClient.listarVentas();
+                        if (ventas != null) {
+                            sumaTotalVentasGlobal = ventas.stream()
+                                    .filter(v -> v != null && v.getMontoTotal() != null)
+                                    .mapToDouble(v -> v.getMontoTotal().doubleValue())
+                                    .sum();
+                        }
+                        // Marcamos como true para que los siguientes KPIs no vuelvan a hacer la petición HTTP
+                        ventasYaCalculadas = true;
+                        System.out.println("DEBUG: Ventas consultadas exitosamente. Total global: " + sumaTotalVentasGlobal);
+                    } catch (Exception e) {
+                        System.err.println("❌ ERROR AL CONECTAR CON VENTAS: " + e.getMessage());
                     }
-
-                    System.out.println("DEBUG: Suma calculada de ventas: " + sumaTotal);
-
-                    // Creamos una métrica dinámica limpia
-                    Map<String, Object> metricaDinamica = new HashMap<>();
-                    metricaDinamica.put("valorActual", sumaTotal);
-                    metricaDinamica.put("sucursalNombre", "Global Consolidado");
-
-                    // FORZAMOS la limpieza y reemplazo total de métricas
-                    List<Map<String, Object>> listaMetricas = new ArrayList<>();
-                    listaMetricas.add(metricaDinamica);
-
-                    definicion.put("metricas", listaMetricas);
-
-                    // Saltamos al siguiente KPI para no procesar lógica manual
-                    continue;
-
-                } catch (Exception e) {
-                    System.err.println("❌ ERROR CRÍTICO EN CÁLCULO DE VENTAS: " + e.getMessage());
-                    e.printStackTrace();
                 }
+
+                // Le inyectamos el total calculado a ESTE KPI específico
+                Map<String, Object> metricaDinamica = new HashMap<>();
+                metricaDinamica.put("valorActual", sumaTotalVentasGlobal);
+                metricaDinamica.put("sucursalNombre", "Global Consolidado");
+
+                List<Map<String, Object>> listaMetricas = new ArrayList<>();
+                listaMetricas.add(metricaDinamica);
+
+                definicion.put("metricas", listaMetricas);
+
+                continue; // Pasamos a la siguiente definición
             }
 
-            // 3. Flujo normal para KPIs manuales
+            // --- Flujo normal para otros KPIs (Manuales) ---
             Long definicionId = ((Number) definicion.get("id")).longValue();
             List<Map<String, Object>> metricas = kpiClient.obtenerMetricasPorKpi(definicionId);
 
@@ -91,5 +90,12 @@ public class KpiBffService {
         }
 
         return definiciones;
+    }
+    public Map<String, Object> crearDefinicion(Map<String, Object> definicion) {
+        return kpiClient.crearDefinicion(definicion);
+    }
+
+    public Map<String, Object> crearMetrica(Map<String, Object> metrica) {
+        return kpiClient.crearMetrica(metrica);
     }
 }

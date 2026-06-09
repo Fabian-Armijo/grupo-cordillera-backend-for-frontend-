@@ -3,9 +3,7 @@ package com.cordillera.bff.controller;
 import com.cordillera.bff.service.KpiBffService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
@@ -24,5 +22,15 @@ public class KpiBFFController {
 
         // Devolvemos el JSON con un código 200 OK
         return ResponseEntity.ok(dashboardData);
+    }
+    @PostMapping("/definiciones")
+    public ResponseEntity<Map<String, Object>> crearDefinicion(@RequestBody Map<String, Object> definicion) {
+        // kpiBffService no es estrictamente necesario aquí si solo es pasarela, llamamos al cliente directo
+        return ResponseEntity.ok(kpiBffService.crearDefinicion(definicion));
+    }
+
+    @PostMapping("/metricas")
+    public ResponseEntity<Map<String, Object>> crearMetrica(@RequestBody Map<String, Object> metrica) {
+        return ResponseEntity.ok(kpiBffService.crearMetrica(metrica));
     }
 }

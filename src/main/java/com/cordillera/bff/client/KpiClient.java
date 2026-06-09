@@ -3,6 +3,8 @@ package com.cordillera.bff.client;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 
 import java.util.List;
 import java.util.Map;
@@ -14,5 +16,11 @@ import java.util.Map;
         List<Map<String, Object>> obtenerTodosLosKpis();
     @GetMapping("/metricas/{id}")
     List<Map<String, Object>> obtenerMetricasPorKpi(@PathVariable("id") Long id);
+
+    @PostMapping("/definiciones")
+    Map<String, Object> crearDefinicion(@RequestBody Map<String, Object> definicion);
+
+    @PostMapping("/metricas")
+    Map<String, Object> crearMetrica(@RequestBody Map<String, Object> metrica);
     }
 
