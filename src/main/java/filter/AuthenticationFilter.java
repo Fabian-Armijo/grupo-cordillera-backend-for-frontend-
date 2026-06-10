@@ -18,11 +18,16 @@ import java.util.Optional;
 @Component
 public class AuthenticationFilter implements HandlerFilterFunction<ServerResponse, ServerResponse> {
 
-    // IMPORTANTÍSIMO: Sigue siendo tu misma clave secreta
     private final String SECRET_KEY = "MiClaveSecretaSuperSeguraQueNadiePuedeAdivinarYEsMuyLarga123456";
 
     @Override
     public ServerResponse filter(ServerRequest request, HandlerFunction<ServerResponse> next) throws Exception {
+
+        // 🌟 EXCEPCIÓN: Si la ruta es el acumulador de KPIs, la dejamos pasar sin validar Token
+        String path = request.path();
+        if ("/api/kpi/acumular".equals(path)) {
+            return next.handle(request);
+        }
 
         // 1. Verificar si la cabecera Authorization viene en la petición
         Optional<String> authHeaderOpt = Optional.ofNullable(request.headers().firstHeader(HttpHeaders.AUTHORIZATION));
@@ -43,7 +48,7 @@ public class AuthenticationFilter implements HandlerFilterFunction<ServerRespons
         String token = authHeader.substring(7);
 
         try {
-            // 3. Validar el JWT usando la firma secreta (Tu misma lógica exacta)
+            // 3. Validar el JWT usando la firma secreta
             SecretKey key = Keys.hmacShaKeyFor(SECRET_KEY.getBytes(StandardCharsets.UTF_8));
 
             Jwts.parserBuilder()
@@ -52,7 +57,6 @@ public class AuthenticationFilter implements HandlerFilterFunction<ServerRespons
                     .parseClaimsJws(token);
 
         } catch (Exception e) {
-            // Si el token expiró, fue alterado o es falso, rebota la petición de inmediato
             return ServerResponse.status(HttpStatus.UNAUTHORIZED)
                     .body("Token no válido o expirado");
         }
