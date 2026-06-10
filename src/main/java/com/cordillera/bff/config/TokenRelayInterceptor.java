@@ -11,25 +11,32 @@ public class TokenRelayInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        // 1. interceptamos la petición del Frontend y buscamos la cookie segura
-        Cookie[] cookies = request.getCookies();
         String jwtToken = null;
 
-        if (cookies != null) {
-            for (Cookie cookie : cookies) {
-                if ("BFF_SESSION".equals(cookie.getName())) {
-                    jwtToken = cookie.getValue();
-                    break;
+        // 🌟 A. Intentar leer desde el Header Authorization (Lo que manda tu Frontend actual)
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            jwtToken = authHeader.substring(7); // Cortamos la palabra "Bearer "
+        }
+
+        // B. Si no venía en el header, buscamos en las cookies como respaldo
+        if (jwtToken == null) {
+            Cookie[] cookies = request.getCookies();
+            if (cookies != null) {
+                for (Cookie cookie : cookies) {
+                    if ("BFF_SESSION".equals(cookie.getName())) {
+                        jwtToken = cookie.getValue();
+                        break;
+                    }
                 }
             }
         }
 
-        // 2. Si la cookie existe, guardamos el JWT en el "hilo de la petición" (Request Attribute)
-        // para que tus servicios (como Catálogo o Ventas) puedan sacarlo fácilmente
+        // 2. Si logramos rescatar el JWT, lo guardamos en el hilo de la petición
         if (jwtToken != null) {
             request.setAttribute("INTERNAL_JWT", jwtToken);
         }
 
-        return true; // Permitir que la petición siga hacia tu controlador
+        return true;
     }
 }

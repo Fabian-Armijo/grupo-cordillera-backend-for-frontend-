@@ -2,12 +2,23 @@ package com.cordillera.bff.client;
 
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+
 import java.util.List;
 import java.util.Map;
 
-@FeignClient(name = "ms-kpi", url = "http://localhost:8090/api/kpi")
+@FeignClient(name = "kpi-client", url = "http://localhost:8087/api/kpi")
 public interface KpiClient {
-
     @GetMapping("/definiciones")
     List<Map<String, Object>> obtenerTodosLosKpis();
+    @GetMapping("/metricas/{id}")
+    List<Map<String, Object>> obtenerMetricasPorKpi(@PathVariable("id") Long id);
+
+    @PostMapping("/definiciones")
+    Map<String, Object> crearDefinicion(@RequestBody Map<String, Object> definicion);
+
+    @PostMapping("/metricas")
+    Map<String, Object> crearMetrica(@RequestBody Map<String, Object> metrica);
 }

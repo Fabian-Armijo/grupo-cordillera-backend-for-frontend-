@@ -14,11 +14,15 @@ public class FeignInterceptorConfig implements RequestInterceptor {
 
     @Override
     public void apply(RequestTemplate template) {
-        // 1. Extraemos el JWT que nuestro TokenRelayInterceptor guardó en el hilo de la petición
+        // 1. Extraemos el JWT del hilo de la petición
         String jwtToken = (String) request.getAttribute("INTERNAL_JWT");
 
-        // 2. Si el token existe, se lo inyectamos automáticamente a la llamada de Feign
         if (jwtToken != null) {
+            // 🌟 Removemos cualquier intento de Authorization previo (como el Basic Auth)
+            // para que no choquen en el microservicio destino
+            template.removeHeader("Authorization");
+
+            // 2. Inyectamos el Bearer Token definitivo
             template.header("Authorization", "Bearer " + jwtToken);
         }
     }
