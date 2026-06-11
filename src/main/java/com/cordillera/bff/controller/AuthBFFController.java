@@ -1,7 +1,8 @@
 package com.cordillera.bff.controller;
 
-import com.cordillera.bff.dto.JwtResponseDTO;
 import com.cordillera.bff.dto.LoginRequestDTO;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpEntity;
@@ -10,40 +11,53 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 
 @RestController
-@RequestMapping("/bff")
+@RequestMapping("/api/auth")
 public class AuthBFFController {
 
     private final RestTemplate restTemplate = new RestTemplate();
+    private final ObjectMapper objectMapper = new ObjectMapper(); // Para mapear JSON de forma segura
 
-    // URL real de tu microservicio de autenticación (pasando por el Gateway o directo)
-    private final String AUTH_SERVICE_URL = "http://localhost:8080/api/auth/login";
+    // Dirección exacta de tu microservicio de autenticación
+    private final String AUTH_SERVICE_URL = "http://localhost:8091/api/auth/login";
 
     @PostMapping("/login")
     public ResponseEntity<?> loginFromFrontend(@RequestBody LoginRequestDTO loginRequest, HttpServletResponse response) {
-
         try {
-            // 1. Enviamos los datos al microservicio de autenticación original
+            // 1. Enviamos el DTO al microservicio
             HttpEntity<LoginRequestDTO> request = new HttpEntity<>(loginRequest);
-            ResponseEntity<JwtResponseDTO> authResponse = restTemplate.postForEntity(AUTH_SERVICE_URL, request, JwtResponseDTO.class);
 
-            // 2. Extraemos el JWT que nos devolvió tu microservicio
-            String jwtToken = authResponse.getBody().getToken();
+            // Recibimos la respuesta como String nativo para evitar colisiones de clases DTO distintas entre proyectos
+            ResponseEntity<String> authResponse = restTemplate.postForEntity(AUTH_SERVICE_URL, request, String.class);
 
-            // 3. ¡MÁGIA DE SEGURIDAD! Metemos el JWT dentro de una Cookie HttpOnly
+            // 2. Parseamos el JSON de manera dinámica usando Jackson
+            JsonNode rootNode = objectMapper.readTree(authResponse.getBody());
+
+            // Buscamos el token. Si en tu microservicio se llama "token" o "accessToken", búscalo correspondientemente aquí:
+            String jwtToken = rootNode.has("token") ? rootNode.get("token").asText() : rootNode.get("accessToken").asText();
+
+            // 3. Inyectamos la Cookie HttpOnly blindada para el Frontend
             Cookie cookie = new Cookie("BFF_SESSION", jwtToken);
-            cookie.setHttpOnly(true);       // Impide que JavaScript (Frontend) robe el token
-            cookie.setSecure(false);        // Cambiar a 'true' en producción cuando uses HTTPS
-            cookie.setPath("/");            // Disponible para todo el dominio
-            cookie.setMaxAge(24 * 60 * 60); // Duración de 24 horas (igual que tu token)
+            cookie.setHttpOnly(true);
+            cookie.setSecure(false); // Pon 'true' si usas HTTPS en el futuro
+            cookie.setPath("/");
+            cookie.setMaxAge(24 * 60 * 60);
 
-            // 4. Añadimos la cookie a la respuesta que va hacia el Frontend
             response.addCookie(cookie);
 
-            // Al frontend solo le devolvemos los datos públicos del usuario, ¡NUNCA el token!
+            // 4. Le devolvemos el cuerpo completo tal cual al Frontend en React
             return ResponseEntity.ok(authResponse.getBody());
 
+        } catch (org.springframework.web.client.HttpClientErrorException e) {
+            // 🚨 Si el microservicio responde 401 o 403, imprímelo explícitamente en la consola de IntelliJ
+            System.err.println("❌ El Microservicio de Autenticación denegó el acceso. Código: " + e.getStatusCode());
+            System.err.println("Respuesta del Microservicio: " + e.getResponseBodyAsString());
+            return ResponseEntity.status(e.getStatusCode()).body(e.getResponseBodyAsString());
+
         } catch (Exception e) {
-            return ResponseEntity.status(401).body("Credenciales inválidas en el BFF");
+            // 🚨 Captura cualquier otro error mecánico (Base de datos caída, error de mapeo, etc.)
+            System.err.println("❌ ERROR INTERNO EN EL PROCESO DEL BFF:");
+            e.printStackTrace();
+            return ResponseEntity.status(500).body("Error interno en el BFF: " + e.getMessage());
         }
     }
 }
