@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.security.Key;
 import java.util.Date;
+import java.util.List;
 import java.util.function.Function;
 
 @Service
@@ -33,7 +34,22 @@ public class JwtService {
      */
     public String extractRole(String token) {
         final Claims claims = extractAllClaims(token);
-        return claims.get("role", String.class); // Retorna: "ADMIN", "GERENTE" o "USUARIO"
+
+        // 1. Buscamos la caja en plural "roles" que mandó el ms-autenticación
+        List<?> roles = claims.get("roles", List.class);
+
+        if (roles != null && !roles.isEmpty()) {
+            String rol = roles.get(0).toString(); // Esto va a ser "ROLE_ADMIN"
+
+            // 🧼 Si ya empieza con "ROLE_", se lo quitamos temporalmente
+            // porque tu filtro JwtAuthenticationFilter ya le agrega el "ROLE_" manualmente.
+            if (rol.startsWith("ROLE_")) {
+                return rol.replace("ROLE_", ""); // Devuelve solo "ADMIN"
+            }
+            return rol;
+        }
+
+        return "USER"; // Rol por defecto si pasa algo raro
     }
 
     /**
@@ -69,8 +85,25 @@ public class JwtService {
                 .getBody();
     }
 
+    // Cambia esto en el JwtService.java de tu BFF:
     private Key getSignInKey() {
-        byte[] keyBytes = Decoders.BASE64.decode(secretKey);
+
+        byte[] keyBytes = secretKey.getBytes();
         return Keys.hmacShaKeyFor(keyBytes);
+    }
+
+    public Long extractSucursalId(String token) {
+        try {
+            final Claims claims = extractAllClaims(token);
+            // Intentamos leerlo como Long, si falla lo pasamos a String y luego a Long
+            Object sucursal = claims.get("sucursalId");
+            if (sucursal == null) {
+                sucursal = claims.get("sucursal"); // Por si acaso se guardó sin el "Id"
+            }
+            return sucursal != null ? Long.valueOf(sucursal.toString()) : null;
+        } catch (Exception e) {
+            System.out.println("[⚠️ JWT] Error extrayendo sucursalId: " + e.getMessage());
+            return null;
+        }
     }
 }

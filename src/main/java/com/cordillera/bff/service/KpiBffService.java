@@ -28,48 +28,40 @@ public class KpiBffService {
     public List<Map<String, Object>> getKpisForDashboard() {
         List<Map<String, Object>> definiciones = kpiClient.obtenerTodosLosKpis();
 
-        // 🌟 OPTIMIZACIÓN: Variables para calcular ventas UNA SOLA VEZ
         double sumaTotalVentasGlobal = 0.0;
         boolean ventasYaCalculadas = false;
 
         for (Map<String, Object> definicion : definiciones) {
             String nombreKpi = (String) definicion.get("nombre");
 
-            // Verificamos si el nombre contiene "ventas"
             if (nombreKpi != null && nombreKpi.toLowerCase().contains("ventas")) {
-
-                // Si es el primer KPI de ventas que encontramos, vamos al ms-ventas
                 if (!ventasYaCalculadas) {
                     try {
-                        List<VentaResponseDto> ventas = ventasClient.listarVentas();
+                        // 🚀 CORREGIDO PARA AJUSTARSE A LA INTERFAZ:
+                        // Se pasan nulls explícitos ya que el Dashboard no requiere filtrar estas ventas por cabeceras manuales.
+                        List<VentaResponseDto> ventas = ventasClient.listarVentas(null, null, null);
                         if (ventas != null) {
                             sumaTotalVentasGlobal = ventas.stream()
                                     .filter(v -> v != null && v.getMontoTotal() != null)
                                     .mapToDouble(v -> v.getMontoTotal().doubleValue())
                                     .sum();
                         }
-                        // Marcamos como true para que los siguientes KPIs no vuelvan a hacer la petición HTTP
                         ventasYaCalculadas = true;
-                        System.out.println("DEBUG: Ventas consultadas exitosamente. Total global: " + sumaTotalVentasGlobal);
                     } catch (Exception e) {
-                        System.err.println("❌ ERROR AL CONECTAR CON VENTAS: " + e.getMessage());
+                        System.err.println("❌ ERROR AL CONECTAR CON VENTAS DESDE KPI: " + e.getMessage());
                     }
                 }
 
-                // Le inyectamos el total calculado a ESTE KPI específico
                 Map<String, Object> metricaDinamica = new HashMap<>();
                 metricaDinamica.put("valorActual", sumaTotalVentasGlobal);
                 metricaDinamica.put("sucursalNombre", "Global Consolidado");
 
                 List<Map<String, Object>> listaMetricas = new ArrayList<>();
                 listaMetricas.add(metricaDinamica);
-
                 definicion.put("metricas", listaMetricas);
-
-                continue; // Pasamos a la siguiente definición
+                continue;
             }
 
-            // --- Flujo normal para otros KPIs (Manuales) ---
             Long definicionId = ((Number) definicion.get("id")).longValue();
             List<Map<String, Object>> metricas = kpiClient.obtenerMetricasPorKpi(definicionId);
 
@@ -91,11 +83,7 @@ public class KpiBffService {
 
         return definiciones;
     }
-    public Map<String, Object> crearDefinicion(Map<String, Object> definicion) {
-        return kpiClient.crearDefinicion(definicion);
-    }
 
-    public Map<String, Object> crearMetrica(Map<String, Object> metrica) {
-        return kpiClient.crearMetrica(metrica);
-    }
+    public Map<String, Object> crearDefinicion(Map<String, Object> definicion) { return kpiClient.crearDefinicion(definicion); }
+    public Map<String, Object> crearMetrica(Map<String, Object> metrica) { return kpiClient.crearMetrica(metrica); }
 }

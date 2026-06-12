@@ -5,9 +5,12 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
@@ -17,17 +20,16 @@ import java.util.List;
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
+    private static final Logger log = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
     private final JwtService jwtService;
 
     public JwtAuthenticationFilter(JwtService jwtService) {
         this.jwtService = jwtService;
     }
 
-    // 🛡️ SOLUCIÓN AL 403: Desactiva por completo este filtro en las rutas públicas de autenticación
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) throws ServletException {
         String path = request.getRequestURI();
-        // Si la ruta contiene o empieza con /api/auth/, el filtro no se ejecuta
         return path.startsWith("/api/auth/") || path.contains("/api/auth");
     }
 
@@ -36,37 +38,65 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
 
-        // Comportamiento normal para el resto de las rutas protegidas del Grupo Cordillera
         String authHeader = request.getHeader("Authorization");
+        String path = request.getRequestURI();
+
+        log.info("🔍 [BFF-JWT] Evaluando petición en la ruta: {}", path);
 
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            log.warn("⚠️ [BFF-JWT] No se detectó cabecera Authorization o no es tipo 'Bearer ' en ruta: {}", path);
             filterChain.doFilter(request, response);
             return;
         }
 
-        String jwt = authHeader.substring(7);
-        String username = jwtService.extractUsername(jwt);
+        try {
+            String jwt = authHeader.substring(7);
+            String username = jwtService.extractUsername(jwt);
+            log.info("👤 [BFF-JWT] Usuario extraído del token: {}", username);
 
-        // Si hay token válido y el usuario no está ya autenticado en el contexto de este hilo
-        if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
 
-            if (jwtService.isTokenValid(jwt)) {
-                String rolDesdeToken = jwtService.extractRole(jwt); // Ejemplo: "ADMIN"
+                boolean isValid = jwtService.isTokenValid(jwt);
+                log.info("🔑 [BFF-JWT] ¿El token es válido para este BFF?: {}", isValid);
 
-                // Formateamos el rol con el prefijo "ROLE_" que exige Spring Security por defecto
-                List<SimpleGrantedAuthority> authorities = Collections.singletonList(
-                        new SimpleGrantedAuthority("ROLE_" + rolDesdeToken)
-                );
+                if (isValid) {
+                    String rolDesdeToken = jwtService.extractRole(jwt);
+                    log.info("🏷️ [BFF-JWT] Rol crudo leído del JWT: '{}'", rolDesdeToken);
 
-                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                        username,
-                        null,
-                        authorities
-                );
+                    if (rolDesdeToken == null || rolDesdeToken.trim().isEmpty()) {
+                        log.error("❌ [BFF-JWT] El rol se leyó como NULL o VACÍO. Spring Security negará el acceso.");
+                        filterChain.doFilter(request, response);
+                        return;
+                    }
 
-                // Establecemos la autenticación en el contexto de Spring
-                SecurityContextHolder.getContext().setAuthentication(authToken);
+                    // 🔄 Sanitización estricta del prefijo
+                    String rolFormateado = rolDesdeToken.trim();
+                    if (!rolFormateado.toUpperCase().startsWith("ROLE_")) {
+                        rolFormateado = "ROLE_" + rolFormateado;
+                    }
+                    rolFormateado = rolFormateado.toUpperCase();
+
+                    log.info("🛡️ [BFF-JWT] Inyectando Autoridad Limpia en Spring Security: '{}'", rolFormateado);
+
+                    List<SimpleGrantedAuthority> authorities = Collections.singletonList(
+                            new SimpleGrantedAuthority(rolFormateado)
+                    );
+
+                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                            username,
+                            jwt,
+                            authorities
+                    );
+
+                    authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authToken);
+                    log.info("✅ [BFF-JWT] Contexto de seguridad establecido con éxito para: {}", username);
+                } else {
+                    log.error("❌ [BFF-JWT] El Token no es válido (Firma errónea o expirado). Revisa las llaves secretas.");
+                }
             }
+        } catch (Exception e) {
+            log.error("💥 [BFF-JWT] Excepción crítica procesando la verificación del JWT: ", e);
         }
 
         filterChain.doFilter(request, response);

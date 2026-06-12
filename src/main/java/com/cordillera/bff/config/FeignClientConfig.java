@@ -9,15 +9,4 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class FeignClientConfig {
 
-    @Value("${microservices.security.user}")
-    private String user;
-
-    @Value("${microservices.security.password}")
-    private String password;
-
-    @Bean
-    public BasicAuthRequestInterceptor basicAuthRequestInterceptor() {
-        // Ahora el BFF usará la contraseña que CADA UNO tenga en su PC
-        return new BasicAuthRequestInterceptor(user, password);
-    }
 }
