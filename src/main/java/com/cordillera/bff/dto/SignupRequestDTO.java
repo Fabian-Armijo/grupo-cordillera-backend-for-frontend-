@@ -9,5 +9,6 @@ public class SignupRequestDTO {
     private String username;
     private String email;
     private String password;
-    private Set<String> roles; // Aquí mandarán ["admin"], ["buyer"], etc.
+    private Set<String> roles;
+    private Long sucursalId;
 }

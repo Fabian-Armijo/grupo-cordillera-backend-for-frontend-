@@ -30,7 +30,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) throws ServletException {
         String path = request.getRequestURI();
-        return path.startsWith("/api/auth/") || path.contains("/api/auth");
+        return request.getRequestURI().equals("/api/auth/login");
     }
 
     @Override
@@ -39,6 +39,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                     FilterChain filterChain) throws ServletException, IOException {
 
         String authHeader = request.getHeader("Authorization");
+        System.out.println("AUTH HEADER RECIBIDO: " + request.getHeader("Authorization"));
         String path = request.getRequestURI();
 
         log.info("🔍 [BFF-JWT] Evaluando petición en la ruta: {}", path);

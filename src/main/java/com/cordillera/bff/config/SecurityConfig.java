@@ -9,6 +9,8 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
@@ -32,50 +34,51 @@ public class SecurityConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(tokenRelayInterceptor)
                 .addPathPatterns("/api/**", "/bff/**")
-                .excludePathPatterns("/api/auth/login", "/api/auth/login/", "/api/auth/**");
+                // Solo el login es verdaderamente público — register y users requieren ADMIN
+                .excludePathPatterns("/api/auth/login", "/api/auth/login/");
+    }
+
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:3000"));
+        config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+        config.setAllowedHeaders(Arrays.asList(
+                "Authorization",
+                "Content-Type",
+                "Cache-Control",
+                "X-Sucursal-Id",
+                "X-User-Role"
+        ));
+        config.setExposedHeaders(List.of("Set-Cookie", "Content-Disposition"));
+        config.setAllowCredentials(true);
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+
         http
-                // 🌐 1. Configuración de CORS
-                .cors(cors -> cors.configurationSource(request -> {
-                    CorsConfiguration config = new CorsConfiguration();
-                    config.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:3000"));
-                    config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-
-                    // 🎯 CABECERAS CORREGIDAS: Agregamos "X-User-Role" manteniendo intactas las demás
-                    config.setAllowedHeaders(Arrays.asList(
-                            "Authorization",
-                            "Content-Type",
-                            "Cache-Control",
-                            "X-Sucursal-Id",
-                            "X-User-Role" // <-- Agregada para solucionar el bloqueo CORS Preflight
-                    ));
-
-                    config.setExposedHeaders(List.of("Set-Cookie"));
-                    config.setAllowCredentials(true);
-                    return config;
-                }))
-
-                // 2. Deshabilitamos CSRF
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(csrf -> csrf.disable())
 
-                // 3. Gestión de sesión sin estado
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                )
 
-                // 4. Matriz de accesos estandarizada usando roles
                 .authorizeHttpRequests(auth -> auth
-                        // 🔓 Rutas 100% Públicas (Login y Preflights)
-                        .requestMatchers("/api/auth/login", "/api/auth/login/", "/api/auth/**").permitAll()
+
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/sucursales").permitAll()
 
-                        // 📊 Módulo de Reportes y KPIs (Restringido solo a Altos Cargos)
-                        // 🎯 ADAPTACIÓN: Agregamos "/api/reportes/**" porque React le pega a esa ruta ahora
-                        .requestMatchers("/bff/reportes/**", "/api/reportes/**", "/api/kpi/**").hasAnyRole("ADMIN", "GERENTE")
+                        .requestMatchers("/api/auth/login").permitAll()
+                        .requestMatchers("/test").permitAll()
 
-                        // 🔓 ACCESO ACCESIBLE PARA TODOS LOS ROLES AUTENTICADOS (Cajero, Vendedor, Admin, etc.)
+                        .requestMatchers("/api/auth/register", "/api/auth/users")
+                        .hasRole("ADMIN")
+
                         .requestMatchers(
                                 "/bff/catalogo/lista",
                                 "/bff/catalogo/categorias",
@@ -87,12 +90,13 @@ public class SecurityConfig implements WebMvcConfigurer {
                                 "/api/productos/**"
                         ).authenticated()
 
-                        // 🔒 Cualquier otra petición requiere autenticación por seguridad
                         .anyRequest().authenticated()
-                );
+                )
 
-        // 5. Inyectamos el filtro JWT corregido antes del nativo de Spring
-        http.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(
+                        jwtAuthenticationFilter,
+                        UsernamePasswordAuthenticationFilter.class
+                );
 
         return http.build();
     }
