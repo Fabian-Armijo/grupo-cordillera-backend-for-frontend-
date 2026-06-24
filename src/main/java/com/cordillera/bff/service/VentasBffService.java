@@ -1,12 +1,17 @@
 package com.cordillera.bff.service;
 
-import com.cordillera.bff.client.VentasClient; // 🎯 Tu cliente original para ms-ventas
+import com.cordillera.bff.client.VentasClient;
 import com.cordillera.bff.client.SucursalClient;
-import com.cordillera.bff.client.KpiClient;      // 🎯 Tu cliente para alimentar ms-kpi
+import com.cordillera.bff.client.KpiClient;
 import com.cordillera.bff.dto.VentaRequestDto;
 import com.cordillera.bff.dto.VentaResponseDto;
 import com.cordillera.bff.dto.SucursalResponseDto;
+
+// Importaciones de resiliencia y caché
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -18,17 +23,54 @@ import java.util.Map;
 public class VentasBffService {
 
     @Autowired
-    private VentasClient ventaClient; // 👈 Tu variable declarada en singular
+    private VentasClient ventaClient; // Cliente original para ms-ventas
 
     @Autowired
     private SucursalClient sucursalClient;
 
     @Autowired
-    private KpiClient kpiClient; // 🎯 Conexión al puerto 8087 para automatizar gráficos y reportes
+    private KpiClient kpiClient; // Conexión al puerto 8087 para automatizar gráficos y reportes
 
-    // 🚀 Recibe los parámetros del controlador y se los pasa a ventaClient
+    @Autowired
+    private CacheManager cacheManager; // Nuestro gestor de salvavidas en memoria
+
+    // 🚀 Intentamos llamar a ms-ventas. Si falla, el CircuitBreaker redirige a "listarVentasFallback"
+    @CircuitBreaker(name = "ventasCB", fallbackMethod = "listarVentasFallback")
     public List<VentaResponseDto> listarTodasLasVentas(String userRole, Long sucursalId, String token) {
-        return ventaClient.listarVentas(userRole, sucursalId, token);
+        // 1. Intentamos obtener la información real y en vivo desde el microservicio
+        List<VentaResponseDto> ventasVivas = ventaClient.listarVentas(userRole, sucursalId, token);
+
+        // 2. Si funcionó (no explotó), actualizamos nuestro salvavidas (Caché)
+        // Creamos una llave única para no mezclar los datos del ADMIN con los de los GERENTES
+        String cacheKey = "ventas_" + (sucursalId != null ? sucursalId : "GLOBAL");
+
+        Cache cache = cacheManager.getCache("ventasCache");
+        if (cache != null) {
+            cache.put(cacheKey, ventasVivas);
+        }
+
+        return ventasVivas;
+    }
+
+    // 🛡️ EL SALVAVIDAS: Usamos Throwable para atrapar errores profundos de red de Feign
+    public List<VentaResponseDto> listarVentasFallback(String userRole, Long sucursalId, String token, Throwable t) {
+        System.err.println("🚨 [ALERTA BFF] ms-ventas está CAÍDO o no responde. Activando Cortacircuitos...");
+        System.err.println("Motivo del fallo: " + t.getMessage());
+
+        String cacheKey = "ventas_" + (sucursalId != null ? sucursalId : "GLOBAL");
+        Cache cache = cacheManager.getCache("ventasCache");
+
+        // Verificamos si tenemos datos viejos guardados para este usuario
+        if (cache != null && cache.get(cacheKey) != null) {
+            System.out.println("✅ [BFF] Rescatando última información conocida de la caché para: " + cacheKey);
+            @SuppressWarnings("unchecked")
+            List<VentaResponseDto> datosCacheados = (List<VentaResponseDto>) cache.get(cacheKey).get();
+            return datosCacheados;
+        }
+
+        // Si el microservicio se cayó y NUNCA habíamos guardado caché, devolvemos lista vacía
+        System.err.println("❌ [BFF] No hay caché disponible para: " + cacheKey + ". Retornando tabla vacía para no romper el Frontend.");
+        return new ArrayList<>();
     }
 
     // 🎯 ORQUESTACIÓN TRANSACCIONAL CORREGIDA: Usa el acumulador nativo y amarra la sucursal real
@@ -57,7 +99,7 @@ public class VentasBffService {
             List<Map<String, Object>> listaProductos = new ArrayList<>();
             listaProductos.add(itemVendido);
 
-            // 🚀 SOLUCIONADO: Mandamos la sucursal explícitamente para que impacte el KPI que corresponde
+            // 🚀 Mandamos la sucursal explícitamente para que impacte el KPI que corresponde
             kpiClient.acumularProgreso(sucursalReal, listaProductos);
             System.out.println("⭐ [BFF-VENTAS] -> ms-kpi recalculó exitosamente las métricas para la sucursal " + sucursalReal);
 

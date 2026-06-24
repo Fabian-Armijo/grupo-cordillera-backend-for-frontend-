@@ -23,50 +23,44 @@ public class CatalogoBffService {
     @Autowired
     private StockClient stockClient;
 
-    // 🎯 EXTRACCIÓN MEJORADA: Obtiene la sucursal de forma directa y robusta
+    // Inyectamos el JwtService para poder leer el token directamente
+    @Autowired
+    private JwtService jwtService;
+
     public List<CatalogoDashboardDTO> listarCatalogoCompleto(Long sucursalIdHeader) {
         Long sucursalIdUsuario = null;
 
-        // 🏢 PASO 1: Intentar recuperar del contexto de Spring Security
+        // 🏢 PASO 1: Recuperar la sucursal directamente desde el Token JWT guardado en Seguridad
         try {
             Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-            if (auth != null) {
-                // Opción A: Intentar desde el objeto principal (Principal) si tu filter guarda un Map o Claims ahí
-                if (auth.getPrincipal() instanceof Map) {
-                    Map<?, ?> principalMap = (Map<?, ?>) auth.getPrincipal();
-                    if (principalMap.containsKey("sucursalId") && principalMap.get("sucursalId") != null) {
-                        sucursalIdUsuario = Long.valueOf(principalMap.get("sucursalId").toString());
-                    }
-                }
+            // En nuestro JwtAuthenticationFilter, guardamos el token como 'Credentials'
+            if (auth != null && auth.getCredentials() != null) {
+                String token = auth.getCredentials().toString();
+                sucursalIdUsuario = jwtService.extractSucursalId(token);
 
-                // Opción B: Si falla la A, buscar en los detalles tradicionales
-                if (sucursalIdUsuario == null && auth.getDetails() instanceof Map) {
-                    Map<?, ?> details = (Map<?, ?>) auth.getDetails();
-                    if (details.containsKey("sucursalId") && details.get("sucursalId") != null) {
-                        sucursalIdUsuario = Long.valueOf(details.get("sucursalId").toString());
-                    }
+                if (sucursalIdUsuario != null) {
+                    System.out.println("✅ [GATEWAY-SERVICE] Sucursal rescatada exitosamente desde el JWT de seguridad: " + sucursalIdUsuario);
                 }
             }
         } catch (Exception e) {
-            System.err.println("⚠️ No se pudo procesar el SecurityContext: " + e.getMessage());
+            System.err.println("⚠️ No se pudo extraer la sucursal del token: " + e.getMessage());
         }
 
-        // 🏢 PASO 2: Si la autenticación no lo tenía en memoria, usamos la cabecera inyectada por el Gateway/React
+        // 🏢 PASO 2: Si la autenticación falló, intentamos usar la cabecera (Fallback)
         if (sucursalIdUsuario == null) {
             sucursalIdUsuario = sucursalIdHeader;
         }
 
-        // 🏢 PASO 3: REFUERZO COMERCIAL INTELIGENTE
-        // Si el Interceptor Compartido imprimió en consola "Sucursal Real: 7", significa que esa data está viajando.
-        // Si por alguna razón los pasos previos fallan, forzamos la sucursal 7 provisionalmente para desbloquear tu test de KPIs.
+        // 🏢 PASO 3: ZERO TRUST (Adiós Sucursal 7)
+        // Si nadie nos dice qué sucursal es, bloqueamos la operación por seguridad.
         if (sucursalIdUsuario == null) {
-            System.out.println("⚠️ [GATEWAY-SERVICE] Alerta: No se parseó 'sucursalId' en Contexto ni Header. Aplicando contingencia de pruebas a Sucursal 7.");
-            sucursalIdUsuario = 7L;
+            System.err.println("❌ [GATEWAY-SERVICE] Error Crítico: No se pudo determinar la sucursal del usuario. Operación denegada.");
+            throw new RuntimeException("Acceso denegado: No se pudo verificar a qué sucursal pertenece el usuario.");
         }
 
-        System.out.println("🔄 [GATEWAY-SERVICE] -> Solicitando inventario masivo a ms-stock para la sucursal REAL: " + sucursalIdUsuario);
+        System.out.println("🔄 [GATEWAY-SERVICE] -> Solicitando inventario a ms-stock para la sucursal REAL: " + sucursalIdUsuario);
 
-        // 2. Traer todo el stock de esa sucursal en UNA Sola llamada limpia
+        // 2. Traer todo el stock de esa sucursal
         List<StockResponseDTO> stockSucursal;
         try {
             stockSucursal = stockClient.obtenerStockPorSucursal(sucursalIdUsuario);
@@ -80,18 +74,18 @@ public class CatalogoBffService {
             return List.of();
         }
 
-        // 3. Traer todos los productos de ms-productos para acoplar los metadatos (Nombres y precios)
+        // 3. Traer todos los productos de ms-productos
         System.out.println("📦 [GATEWAY-SERVICE] -> Cruzando datos asíncronos con ms-productos...");
         List<ProductoResponseDTO> todosLosProductos = productoClient.obtenerTodosLosProductos();
         if (todosLosProductos == null || todosLosProductos.isEmpty()) {
             return List.of();
         }
 
-        // Convertimos los productos en un Mapa rápido en memoria [ID_Producto -> Datos_Producto]
+        // Convertimos los productos en un Mapa en memoria
         Map<Long, ProductoResponseDTO> mapaProductos = todosLosProductos.stream()
                 .collect(Collectors.toMap(ProductoResponseDTO::getId, p -> p, (p1, p2) -> p1));
 
-        // 4. Procesamos la lista basándonos ÚNICAMENTE en lo que hay en stock en la sucursal real
+        // 4. Procesamos la lista final
         return stockSucursal.stream()
                 .filter(stock -> stock.getCantidadDisponible() != null && stock.getCantidadDisponible() > 0)
                 .map(stock -> {
