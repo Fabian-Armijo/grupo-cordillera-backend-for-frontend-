@@ -6,7 +6,15 @@ import com.cordillera.bff.client.StockClient;
 import com.cordillera.bff.dto.CatalogoDashboardDTO;
 import com.cordillera.bff.dto.CategoriaResponseDTO;
 import com.cordillera.bff.dto.StockRequestDTO;
+import com.cordillera.bff.dto.RespuestaResilienteDto; // 👈 ¡El Sobre!
 import com.cordillera.bff.service.CatalogoBffService;
+
+// Importaciones de Swagger / OpenAPI
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -19,6 +27,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/bff/catalogo") // 🎯 El único punto de entrada para el catálogo de inventario
+@Tag(name = "BFF - Catálogo y Stock", description = "Orquestador unificado de inventario. Combina datos de ms-productos, ms-categorias y ms-stock con tolerancia a fallos.")
 public class CatalogoBffController {
 
     @Autowired
@@ -33,24 +42,35 @@ public class CatalogoBffController {
     @Autowired
     private StockClient stockClient; // 🎯 Conexión puerto 8085 para inyectar inventario
 
-    // --- 🛒 LISTADO DE PRODUCTOS CON STOCK (100% DINÁMICO POR SUCURSAL) ---
+    // --- 🛒 LISTADO DE PRODUCTOS CON STOCK (100% DINÁMICO Y RESILIENTE) ---
+    @Operation(
+            summary = "Listar catálogo con stock consolidado",
+            description = "Obtiene los productos y sus stocks cruzados. Cuenta con tolerancia a fallos: si un microservicio cae, retorna los últimos datos conocidos en caché envueltos en un DTO resiliente."
+    )
+    @ApiResponse(responseCode = "200", description = "Catálogo obtenido con éxito (en vivo o desde caché)")
     @GetMapping("/lista")
-    public ResponseEntity<?> obtenerListaCatalogoParaVentas(
-            @RequestHeader(value = "X-Sucursal-Id", required = false) Long sucursalIdHeader) {
+    public ResponseEntity<RespuestaResilienteDto<List<CatalogoDashboardDTO>>> obtenerListaCatalogoParaVentas(
+            @Parameter(hidden = true) @RequestHeader(value = "X-Sucursal-Id", required = false) Long sucursalIdHeader) {
 
         System.out.println("📦 [GATEWAY-BFF] -> Orquestando catálogo dinámico. Header 'X-Sucursal-Id' capturado: " + sucursalIdHeader);
         try {
-            // 🚀 SOLUCIONADO: Le pasamos el header al servicio para que resuelva la sucursal del usuario logueado de forma dinámica
-            List<CatalogoDashboardDTO> catalogo = bffService.listarCatalogoCompleto(sucursalIdHeader);
+            // 🚀 SOLUCIONADO: El servicio ahora devuelve el "Sobre" con la data y el estado de la caché
+            RespuestaResilienteDto<List<CatalogoDashboardDTO>> catalogo = bffService.listarCatalogoCompleto(sucursalIdHeader);
             return ResponseEntity.ok(catalogo);
         } catch (Exception e) {
-            System.err.println("❌ [GATEWAY-BFF] Error al consolidar datos de los microservicios: " + e.getMessage());
+            System.err.println("❌ [GATEWAY-BFF] Error crítico al consolidar datos: " + e.getMessage());
+            // Si todo falla a nivel de Gateway, devolvemos un sobre vacío por seguridad
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("message", "Error al procesar la solicitud del inventario unificado."));
+                    .body(new RespuestaResilienteDto<>(List.of()));
         }
     }
 
     // --- 🏷️ LISTADO DE CATEGORÍAS PARA EL CREAR PRODUCTO ---
+    @Operation(
+            summary = "Obtener lista de categorías",
+            description = "Consulta al ms-categorias para desplegar el selector al momento de crear un nuevo producto en el catálogo."
+    )
+    @ApiResponse(responseCode = "200", description = "Lista de categorías recuperada con éxito")
     @GetMapping("/categorias")
     public ResponseEntity<?> obtenerCategoriasParaModal() {
         System.out.println("🏷️ [GATEWAY-BFF] -> Solicitando categorías al ms-categorias (Puerto 8083) para el catálogo...");
@@ -65,8 +85,15 @@ public class CatalogoBffController {
     }
 
     // --- 🚀 CREACIÓN UNIFICADA: CREA EL PRODUCTO E INICIALIZA EL STOCK AL INSTANTE ---
+    @Operation(
+            summary = "Crear producto y asignar stock inicial",
+            description = "Orquesta la creación de un registro maestro en ms-productos y luego inyecta asíncronamente el inventario inicial en ms-stock."
+    )
+    @ApiResponse(responseCode = "201", description = "Producto y stock creados exitosamente")
     @PostMapping("/crear")
-    public ResponseEntity<?> crearProductoUnificado(@RequestBody Object productoPayload) {
+    public ResponseEntity<?> crearProductoUnificado(
+            @Parameter(description = "Datos combinados del producto y su inventario inicial") @RequestBody Object productoPayload) {
+
         System.out.println("🚀 [GATEWAY-BFF] -> Paso 1: Solicitando registro maestro en ms-productos...");
 
         // 1. Extraer el rol real del usuario logueado de forma dinámica

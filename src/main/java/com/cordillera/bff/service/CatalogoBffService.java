@@ -5,6 +5,8 @@ import com.cordillera.bff.client.StockClient;
 import com.cordillera.bff.dto.CatalogoDashboardDTO;
 import com.cordillera.bff.dto.ProductoResponseDTO;
 import com.cordillera.bff.dto.StockResponseDTO;
+import com.cordillera.bff.dto.RespuestaResilienteDto;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -12,6 +14,8 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Service
@@ -23,227 +27,96 @@ public class CatalogoBffService {
     @Autowired
     private StockClient stockClient;
 
-    // 🎯 EXTRACCIÓN MEJORADA: Obtiene la sucursal de forma directa y robusta
-    public List<CatalogoDashboardDTO> listarCatalogoCompleto(Long sucursalIdHeader) {
+    // 🛡️ CACHÉ "MODO DIOS": Bóveda en memoria nativa
+    private final Map<String, List<CatalogoDashboardDTO>> memoriaCatalogo = new ConcurrentHashMap<>();
+    private final Map<String, String> memoriaHora = new ConcurrentHashMap<>();
+
+    public RespuestaResilienteDto<List<CatalogoDashboardDTO>> listarCatalogoCompleto(Long sucursalIdHeader) {
 
         Long sucursalIdUsuario = null;
 
+        // --- 1. RESOLUCIÓN DE SUCURSAL ---
         try {
             Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-            System.out.println("======================================");
-            System.out.println("AUTH: " + auth);
-            System.out.println("PRINCIPAL: " + auth.getPrincipal());
-            System.out.println("DETAILS: " + auth.getDetails());
-            System.out.println("AUTHORITIES: " + auth.getAuthorities());
-            System.out.println("======================================");
             if (auth != null) {
-
                 if (auth.getPrincipal() instanceof Map) {
                     Map<?, ?> principalMap = (Map<?, ?>) auth.getPrincipal();
-
-                    if (principalMap.containsKey("sucursalId")
-                            && principalMap.get("sucursalId") != null) {
-
-                        sucursalIdUsuario =
-                                Long.valueOf(principalMap.get("sucursalId").toString());
+                    if (principalMap.containsKey("sucursalId") && principalMap.get("sucursalId") != null) {
+                        sucursalIdUsuario = Long.valueOf(principalMap.get("sucursalId").toString());
                     }
                 }
-
-                if (sucursalIdUsuario == null
-                        && auth.getDetails() instanceof Map) {
-
-                    Map<?, ?> details =
-                            (Map<?, ?>) auth.getDetails();
-
-                    if (details.containsKey("sucursalId")
-                            && details.get("sucursalId") != null) {
-
-                        sucursalIdUsuario =
-                                Long.valueOf(details.get("sucursalId").toString());
+                if (sucursalIdUsuario == null && auth.getDetails() instanceof Map) {
+                    Map<?, ?> details = (Map<?, ?>) auth.getDetails();
+                    if (details.containsKey("sucursalId") && details.get("sucursalId") != null) {
+                        sucursalIdUsuario = Long.valueOf(details.get("sucursalId").toString());
                     }
                 }
             }
-
         } catch (Exception e) {
-            System.err.println(
-                    "⚠️ Error leyendo SecurityContext: "
-                            + e.getMessage()
-            );
+            System.err.println("⚠️ Error leyendo SecurityContext: " + e.getMessage());
         }
 
-        if (sucursalIdUsuario == null) {
-            sucursalIdUsuario = sucursalIdHeader;
-        }
+        if (sucursalIdUsuario == null) sucursalIdUsuario = sucursalIdHeader;
+        if (sucursalIdUsuario == null) sucursalIdUsuario = 7L;
 
-        if (sucursalIdUsuario == null) {
-            System.out.println(
-                    "⚠️ No se encontró sucursal en contexto ni header."
-            );
+        String llaveSucursal = "sucursal_" + sucursalIdUsuario;
 
-            sucursalIdUsuario = 7L;
-        }
-
-        System.out.println("======================================");
-        System.out.println("SUCURSAL DETECTADA: " + sucursalIdUsuario);
-        System.out.println("======================================");
-
-        List<StockResponseDTO> stockSucursal;
-
+        // --- 2. EJECUCIÓN PROTEGIDA ---
         try {
+            // A. Consultamos el Stock
+            List<StockResponseDTO> stockSucursal = stockClient.obtenerStockPorSucursal(sucursalIdUsuario);
 
-            stockSucursal =
-                    stockClient.obtenerStockPorSucursal(sucursalIdUsuario);
+            if (stockSucursal == null || stockSucursal.isEmpty()) {
+                return new RespuestaResilienteDto<>(List.of());
+            }
 
-        } catch (Exception e) {
+            // B. Consultamos los Productos
+            List<ProductoResponseDTO> todosLosProductos = productoClient.obtenerTodosLosProductos();
 
-            System.err.println(
-                    "❌ Error consultando ms-stock: "
-                            + e.getMessage()
-            );
+            // C. Mapeamos y Unificamos (Filtrando silenciosamente los fantasmas sin lanzar alarmas)
+            Map<Long, ProductoResponseDTO> mapaProductos = todosLosProductos != null
+                    ? todosLosProductos.stream()
+                    .filter(p -> p.getId() != null)
+                    .collect(Collectors.toMap(ProductoResponseDTO::getId, p -> p, (p1, p2) -> p1))
+                    : Map.of();
 
-            return List.of();
-        }
+            List<CatalogoDashboardDTO> resultado = stockSucursal.stream()
+                    .filter(stock -> stock.getCantidadDisponible() != null && stock.getCantidadDisponible() > 0)
+                    .map(stock -> {
+                        ProductoResponseDTO producto = mapaProductos.get(stock.getProductoId());
 
-        System.out.println("======================================");
-        System.out.println("STOCK RECIBIDO DESDE MS-STOCK");
-        System.out.println("TOTAL STOCKS: "
-                + (stockSucursal == null ? 0 : stockSucursal.size()));
+                        // Si el producto no existe en ms-productos (Ej: El famoso ID 13), lo ignoramos silenciosamente
+                        if (producto == null) return null;
 
-        if (stockSucursal != null) {
+                        return CatalogoDashboardDTO.builder()
+                                .id(stock.getProductoId())
+                                .sku(producto.getSku())
+                                .nombreProducto(producto.getNombre())
+                                .precio(producto.getPrecio())
+                                .nombreCategoria("General")
+                                .stockTotalDisponible(stock.getCantidadDisponible())
+                                .build();
+                    })
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
 
-            stockSucursal.forEach(stock ->
-                    System.out.println(
-                            "ProductoId="
-                                    + stock.getProductoId()
-                                    + " | Stock="
-                                    + stock.getCantidadDisponible()
-                    )
-            );
-        }
+            // 🌟 ÉXITO TOTAL: Guardamos la lista validada en nuestra bóveda privada
+            memoriaCatalogo.put(llaveSucursal, resultado);
+            memoriaHora.put(llaveSucursal, java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")));
 
-        System.out.println("======================================");
-
-        if (stockSucursal == null || stockSucursal.isEmpty()) {
-
-            System.out.println(
-                    "⚠️ No existen registros de stock para sucursal "
-                            + sucursalIdUsuario
-            );
-
-            return List.of();
-        }
-
-        List<ProductoResponseDTO> todosLosProductos;
-
-        try {
-
-            todosLosProductos =
-                    productoClient.obtenerTodosLosProductos();
+            return new RespuestaResilienteDto<>(resultado);
 
         } catch (Exception e) {
+            // 🚨 FALLBACK REAL: Solo entramos aquí si Feign lanza error porque ms-productos o ms-stock explotaron o se apagaron
+            System.err.println("🚨 [ALERTA BFF] Falla de red detectada. Rescatando caché de bóveda para: " + llaveSucursal + ". Causa: " + e.getMessage());
 
-            System.err.println(
-                    "❌ Error consultando ms-productos: "
-                            + e.getMessage()
-            );
+            if (memoriaCatalogo.containsKey(llaveSucursal)) {
+                List<CatalogoDashboardDTO> datosRescatados = memoriaCatalogo.get(llaveSucursal);
+                String horaRescate = memoriaHora.get(llaveSucursal);
+                return new RespuestaResilienteDto<>(datosRescatados, horaRescate);
+            }
 
-            return List.of();
+            return new RespuestaResilienteDto<>(List.of());
         }
-
-        System.out.println("======================================");
-        System.out.println("PRODUCTOS RECIBIDOS DESDE MS-PRODUCTOS");
-
-        if (todosLosProductos == null) {
-
-            System.out.println("LA LISTA VIENE NULL");
-
-            return List.of();
-        }
-
-        System.out.println("TOTAL PRODUCTOS: "
-                + todosLosProductos.size());
-
-        todosLosProductos.forEach(p ->
-                System.out.println(
-                        "ID=" + p.getId()
-                                + " | Nombre=" + p.getNombre()
-                                + " | Sucursal=" + p.getSucursalId()
-                )
-        );
-
-        System.out.println("======================================");
-
-        Map<Long, ProductoResponseDTO> mapaProductos =
-                todosLosProductos.stream()
-                        .filter(p -> p.getId() != null)
-                        .collect(
-                                Collectors.toMap(
-                                        ProductoResponseDTO::getId,
-                                        p -> p,
-                                        (p1, p2) -> p1
-                                )
-                        );
-
-        List<CatalogoDashboardDTO> resultado = stockSucursal.stream()
-                .filter(stock ->
-                        stock.getCantidadDisponible() != null
-                                && stock.getCantidadDisponible() > 0
-                )
-                .map(stock -> {
-
-                    ProductoResponseDTO producto =
-                            mapaProductos.get(stock.getProductoId());
-
-                    if (producto == null) {
-
-                        System.out.println(
-                                "⚠️ PRODUCTO NO ENCONTRADO EN MS-PRODUCTOS -> ID="
-                                        + stock.getProductoId()
-                        );
-                    }
-
-                    return CatalogoDashboardDTO.builder()
-                            .id(stock.getProductoId())
-                            .sku(
-                                    producto != null
-                                            ? producto.getSku()
-                                            : "S/N"
-                            )
-                            .nombreProducto(
-                                    producto != null
-                                            ? producto.getNombre()
-                                            : "Producto Descatalogado (ID: "
-                                            + stock.getProductoId() + ")"
-                            )
-                            .precio(
-                                    producto != null
-                                            ? producto.getPrecio()
-                                            : 0.0
-                            )
-                            .nombreCategoria("General")
-                            .stockTotalDisponible(
-                                    stock.getCantidadDisponible()
-                            )
-                            .build();
-                })
-                .collect(Collectors.toList());
-
-        System.out.println("======================================");
-        System.out.println("CATALOGO FINAL ENVIADO A REACT");
-        System.out.println("TOTAL ITEMS: " + resultado.size());
-
-        resultado.forEach(item ->
-                System.out.println(
-                        item.getId()
-                                + " | "
-                                + item.getNombreProducto()
-                                + " | stock="
-                                + item.getStockTotalDisponible()
-                )
-        );
-
-        System.out.println("======================================");
-
-        return resultado;
     }
 }
