@@ -1,5 +1,4 @@
-package com.cordillera.bff;
-import com.cordillera.bff.controller.AuthBFFController;
+package com.cordillera.bff.controller;
 
 import com.cordillera.bff.dto.JwtResponseDTO;
 import com.cordillera.bff.dto.LoginRequestDTO;

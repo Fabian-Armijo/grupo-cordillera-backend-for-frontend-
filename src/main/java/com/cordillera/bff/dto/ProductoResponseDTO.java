@@ -9,4 +9,6 @@ public class ProductoResponseDTO {
     private String nombre;
     private Double precio;
     private Long categoriaId;
+    private Long sucursalId;
+
 }
