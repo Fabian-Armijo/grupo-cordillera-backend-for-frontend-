@@ -1,4 +1,4 @@
-package com.cordillera.bff;
+package com.cordillera.bff.controller;
 
 import com.cordillera.bff.client.KpiClient;
 import org.junit.jupiter.api.Test;
