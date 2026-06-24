@@ -6,9 +6,8 @@ import com.cordillera.bff.client.KpiClient;
 import com.cordillera.bff.dto.VentaRequestDto;
 import com.cordillera.bff.dto.VentaResponseDto;
 import com.cordillera.bff.dto.SucursalResponseDto;
+import com.cordillera.bff.dto.RespuestaResilienteDto; // 👈 ¡Importación del nuevo "Sobre"!
 
-// Importaciones de resiliencia y caché
-import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
@@ -34,43 +33,47 @@ public class VentasBffService {
     @Autowired
     private CacheManager cacheManager; // Nuestro gestor de salvavidas en memoria
 
-    // 🚀 Intentamos llamar a ms-ventas. Si falla, el CircuitBreaker redirige a "listarVentasFallback"
-    @CircuitBreaker(name = "ventasCB", fallbackMethod = "listarVentasFallback")
-    public List<VentaResponseDto> listarTodasLasVentas(String userRole, Long sucursalId, String token) {
-        // 1. Intentamos obtener la información real y en vivo desde el microservicio
-        List<VentaResponseDto> ventasVivas = ventaClient.listarVentas(userRole, sucursalId, token);
+    // 🛡️ PATRÓN ENVELOPE + TRY/CATCH: La forma más segura de enviar caché y alertas al Frontend
+    public RespuestaResilienteDto<List<VentaResponseDto>> listarTodasLasVentas(String userRole, Long sucursalId, String token) {
 
-        // 2. Si funcionó (no explotó), actualizamos nuestro salvavidas (Caché)
-        // Creamos una llave única para no mezclar los datos del ADMIN con los de los GERENTES
+        // Llaves para guardar la información y la hora exacta
         String cacheKey = "ventas_" + (sucursalId != null ? sucursalId : "GLOBAL");
+        String timeKey = "ventas_hora_" + (sucursalId != null ? sucursalId : "GLOBAL");
 
         Cache cache = cacheManager.getCache("ventasCache");
-        if (cache != null) {
-            cache.put(cacheKey, ventasVivas);
+
+        try {
+            // 1. Intentamos obtener la información viva y real
+            List<VentaResponseDto> ventasVivas = ventaClient.listarVentas(userRole, sucursalId, token);
+
+            // 2. Si funciona, actualizamos el salvavidas y la HORA EXACTA
+            if (cache != null) {
+                cache.put(cacheKey, ventasVivas);
+                // Guardamos la hora actual en formato HH:mm (Ej: 14:30)
+                cache.put(timeKey, java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")));
+            }
+
+            // Retornamos el sobre indicando que los datos son FRESCOS (fromCache = false)
+            return new RespuestaResilienteDto<>(ventasVivas);
+
+        } catch (Exception e) {
+            // 🚨 3. SI EXPLOTA (ms-ventas caído), rescatamos datos y hora de la RAM
+            System.err.println("🚨 [ALERTA BFF] ms-ventas está CAÍDO. Rescatando caché para: " + cacheKey);
+
+            if (cache != null && cache.get(cacheKey) != null) {
+                @SuppressWarnings("unchecked")
+                List<VentaResponseDto> datosCacheados = (List<VentaResponseDto>) cache.get(cacheKey).get();
+                String horaGuardada = (String) cache.get(timeKey).get();
+
+                System.out.println("✅ [BFF] Entregando datos de respaldo a React. Hora de caché: " + horaGuardada);
+                // Retornamos el sobre indicando que es CACHÉ y enviamos la hora
+                return new RespuestaResilienteDto<>(datosCacheados, horaGuardada);
+            }
+
+            // Si nunca hubo caché, enviamos el sobre con una lista vacía
+            System.err.println("❌ [BFF] No hay caché disponible. Retornando tabla vacía.");
+            return new RespuestaResilienteDto<>(new ArrayList<>());
         }
-
-        return ventasVivas;
-    }
-
-    // 🛡️ EL SALVAVIDAS: Usamos Throwable para atrapar errores profundos de red de Feign
-    public List<VentaResponseDto> listarVentasFallback(String userRole, Long sucursalId, String token, Throwable t) {
-        System.err.println("🚨 [ALERTA BFF] ms-ventas está CAÍDO o no responde. Activando Cortacircuitos...");
-        System.err.println("Motivo del fallo: " + t.getMessage());
-
-        String cacheKey = "ventas_" + (sucursalId != null ? sucursalId : "GLOBAL");
-        Cache cache = cacheManager.getCache("ventasCache");
-
-        // Verificamos si tenemos datos viejos guardados para este usuario
-        if (cache != null && cache.get(cacheKey) != null) {
-            System.out.println("✅ [BFF] Rescatando última información conocida de la caché para: " + cacheKey);
-            @SuppressWarnings("unchecked")
-            List<VentaResponseDto> datosCacheados = (List<VentaResponseDto>) cache.get(cacheKey).get();
-            return datosCacheados;
-        }
-
-        // Si el microservicio se cayó y NUNCA habíamos guardado caché, devolvemos lista vacía
-        System.err.println("❌ [BFF] No hay caché disponible para: " + cacheKey + ". Retornando tabla vacía para no romper el Frontend.");
-        return new ArrayList<>();
     }
 
     // 🎯 ORQUESTACIÓN TRANSACCIONAL CORREGIDA: Usa el acumulador nativo y amarra la sucursal real
