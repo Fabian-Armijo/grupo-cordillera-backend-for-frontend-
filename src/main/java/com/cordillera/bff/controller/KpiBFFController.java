@@ -4,30 +4,35 @@ import com.cordillera.bff.dto.RespuestaResilienteDto; // 👈 Importamos nuestro
 import com.cordillera.bff.service.KpiBffService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/bff/kpis")
+@RequestMapping("/bff/kpis") // La ruta base que espera el API Gateway
 public class KpiBFFController {
 
     @Autowired
     private KpiBffService kpiBffService;
 
-    @GetMapping("/dashboard")
-    public ResponseEntity<RespuestaResilienteDto<List<Map<String, Object>>>> getKpisForDashboard() {
-        try {
-            // 📦 Enviamos la data envuelta en nuestro DTO
-            return ResponseEntity.ok(kpiBffService.getKpisForDashboard());
-        } catch (Exception e) {
-            // 🛡️ Fallback final de seguridad del Gateway
-            System.err.println("❌ [GATEWAY-BFF] Falla crítica en endpoint de KPIs: " + e.getMessage());
-            return ResponseEntity.internalServerError().body(new RespuestaResilienteDto<>(new ArrayList<>()));
-        }
+    @GetMapping("/dashboard") // El endpoint final que completa la URL
+    public ResponseEntity<List<Map<String, Object>>> obtenerDashboard() {
+        // Llamamos al cerebro (Service) que acabamos de programar
+        List<Map<String, Object>> dashboardData = kpiBffService.getKpisForDashboard();
+
+        // Devolvemos el JSON con un código 200 OK
+        return ResponseEntity.ok(dashboardData);
+    }
+    @PostMapping("/definiciones")
+    public ResponseEntity<Map<String, Object>> crearDefinicion(@RequestBody Map<String, Object> definicion) {
+        // kpiBffService no es estrictamente necesario aquí si solo es pasarela, llamamos al cliente directo
+        return ResponseEntity.ok(kpiBffService.crearDefinicion(definicion));
+    }
+
+    @PostMapping("/metricas")
+    public ResponseEntity<Map<String, Object>> crearMetrica(@RequestBody Map<String, Object> metrica) {
+        return ResponseEntity.ok(kpiBffService.crearMetrica(metrica));
     }
 }

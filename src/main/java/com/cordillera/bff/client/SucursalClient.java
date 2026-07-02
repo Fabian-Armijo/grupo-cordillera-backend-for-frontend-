@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import com.cordillera.bff.dto.SucursalResponseDto;
 
 import java.util.List;
+import java.util.Map;
 
 @FeignClient(name = "ms-sucursales", url = "http://localhost:8084/api/sucursales", configuration = FeignClientConfig.class, fallback = SucursalFallback.class)
 public interface SucursalClient {
@@ -16,4 +17,6 @@ public interface SucursalClient {
 
     @GetMapping
     List<SucursalResponseDto> listarTodas();
+
+
 }

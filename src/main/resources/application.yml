@@ -1,72 +1,65 @@
 server:
   port: 8086
 
-# 🔑 CONFIGURACIÓN DE TU LLAVE SECRETA DE SEGURIDAD (Sincronizada con Microservicio Auth)
-application:
-  security:
-    jwt:
-      secret-key: MiClaveSecretaSuperSeguraQueNadiePuedeAdivinarYEsMuyLarga123456
-
 spring:
   application:
     name: bff-service
 
   cloud:
     gateway:
-      server:
-        webmvc:
-          # 🔄 FILTROS GLOBALES: Se aplica la autenticación limpia a cada microservicio
-          default-filters:
-            - name: AdaptFilter
-              args:
-                filter: "#{@authenticationFilter}"
+      mvc:
+        # Aquí enganchamos tu filtro para que revise los tokens de las rutas de abajo
+        default-filters:
+          - name: AdaptFilter
+            args:
+              filter: "#{@authenticationFilter}"
 
-          globalcors:
-            cors-configurations:
-              '[/**]':
-                allowedOrigins:
-                  - "http://localhost:3000"
-                  - "http://localhost:5173"
-                allowedMethods: [GET, POST, PUT, DELETE, OPTIONS]
-                allowedHeaders: "*"
+        globalcors:
+          cors-configurations:
+            '[/**]':
+              allowedOrigins:
+                - "http://localhost:3000"
+                - "http://localhost:5173"
+              allowedMethods: [GET, POST, PUT, DELETE, OPTIONS]
+              allowedHeaders: "*"
 
-          routes:
-            - id: ms-productos
-              uri: http://localhost:8082
-              predicates:
-                - Path=/api/productos/**
+        routes:
+          - id: ms-productos
+            uri: http://localhost:8082
+            predicates:
+              - Path=/api/productos/**
 
-            - id: ms-categorias
-              uri: http://localhost:8083
-              predicates:
-                - Path=/api/categorias/**
+          - id: ms-categorias
+            uri: http://localhost:8083
+            predicates:
+              - Path=/api/categorias/**
 
-            - id: ms-stock
-              uri: http://localhost:8085
-              predicates:
-                - Path=/api/stock/**
+          - id: ms-stock
+            uri: http://localhost:8085
+            predicates:
+              - Path=/api/stock/**
 
-            - id: ms-ventas
-              uri: http://localhost:8081
-              predicates:
-                - Path=/api/ventas/**
+          - id: ms-ventas
+            uri: http://localhost:8081
+            predicates:
+              - Path=/api/ventas/**
 
-            - id: ms-sucursales
-              uri: http://localhost:8084
-              predicates:
-                - Path=/api/sucursales/**
+          - id: ms-sucursales
+            uri: http://localhost:8084
+            predicates:
+              - Path=/api/sucursales/**
 
-            - id: ms-kpi
-              uri: http://localhost:8087
-              predicates:
-                - Path=/api/kpi/**
+          - id: ms-kpi
+            uri: http://localhost:8087
+            predicates:
+              - Path=/api/kpi/**
 
-            - id: ms-reportes
-              uri: http://localhost:8089
-              predicates:
-                - Path=/api/reportes/**
+          - id: ms-reportes
+            uri: http://localhost:8089
+            predicates:
+              - Path=/api/reportes/**
 
-            - id: ms-autenticacion
-              uri: http://localhost:8091
-              predicates:
-                - Path=/api/auth/**
+          - id: ms-autenticacion
+            uri: http://localhost:8091
+            predicates:
+              - Path=/api/auth/**

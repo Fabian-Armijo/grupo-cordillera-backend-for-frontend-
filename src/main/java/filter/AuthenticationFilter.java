@@ -1,6 +1,5 @@
 package filter;
 
-import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.cloud.gateway.server.mvc.common.MvcUtils;
@@ -52,32 +51,17 @@ public class AuthenticationFilter implements HandlerFilterFunction<ServerRespons
             // 3. Validar el JWT usando la firma secreta
             SecretKey key = Keys.hmacShaKeyFor(SECRET_KEY.getBytes(StandardCharsets.UTF_8));
 
-            // 🌟 CORRECCIÓN CRÍTICA: Extraemos los Claims (datos dentro del JWT) al validar
-            Claims claims = Jwts.parserBuilder()
+            Jwts.parserBuilder()
                     .setSigningKey(key)
                     .build()
-                    .parseClaimsJws(token)
-                    .getBody();
-
-            // 🌟 CORRECCIÓN CRÍTICA: Obtenemos el Rol y el Sucursal ID mapeados en tu token
-            // Nota: Ajusta los nombres "role" y "sucursalId" si en tu MS-AUTH los firmaste con otro nombre (ej: "rol", "sucursal")
-            String userRole = claims.get("role", String.class);
-            Object sucursalIdObj = claims.get("sucursalId");
-            String sucursalId = sucursalIdObj != null ? String.valueOf(sucursalIdObj) : null;
-
-            // 🌟 CORRECCIÓN CRÍTICA: Mutamos la petición inyectando los headers que espera MS-VENTAS
-            ServerRequest requestMutada = ServerRequest.from(request)
-                    .header("X-User-Role", userRole != null ? userRole : "")
-                    .header("X-Sucursal-Id", sucursalId != null ? sucursalId : "")
-                    .build();
-
-            // Devolvemos el flujo usando la petición inyectada con las nuevas cabeceras
-            return next.handle(requestMutada);
+                    .parseClaimsJws(token);
 
         } catch (Exception e) {
-            System.err.println("🚨 Error al procesar o inyectar claims del JWT: " + e.getMessage());
             return ServerResponse.status(HttpStatus.UNAUTHORIZED)
                     .body("Token no válido o expirado");
         }
+
+        // Si todo está bien, dejamos que la petición continúe hacia el microservicio final
+        return next.handle(request);
     }
 }
