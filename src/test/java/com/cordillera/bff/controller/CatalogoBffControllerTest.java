@@ -5,6 +5,7 @@ import com.cordillera.bff.client.ProductoClient;
 import com.cordillera.bff.client.StockClient;
 import com.cordillera.bff.dto.CatalogoDashboardDTO;
 import com.cordillera.bff.dto.CategoriaResponseDTO;
+import com.cordillera.bff.dto.RespuestaResilienteDto; // 👈 Importamos el Sobre
 import com.cordillera.bff.service.CatalogoBffService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,14 +49,18 @@ class CatalogoBffControllerTest {
                 new CatalogoDashboardDTO()
         );
 
+        // 📦 Envolvemos la lista en nuestro sobre resiliente
+        RespuestaResilienteDto<List<CatalogoDashboardDTO>> sobreSimulado = new RespuestaResilienteDto<>(catalogo);
+
+        // 🎯 Ahora el mock coincide con la firma del método
         when(bffService.listarCatalogoCompleto(sucursalId))
-                .thenReturn(catalogo);
+                .thenReturn(sobreSimulado);
 
         ResponseEntity<?> response =
                 controller.obtenerListaCatalogoParaVentas(sucursalId);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(catalogo, response.getBody());
+        assertEquals(sobreSimulado, response.getBody()); // Comparamos el sobre completo
 
         verify(bffService).listarCatalogoCompleto(sucursalId);
     }
@@ -71,6 +76,11 @@ class CatalogoBffControllerTest {
 
         assertEquals(HttpStatus.INTERNAL_SERVER_ERROR,
                 response.getStatusCode());
+
+        // 🛡️ El nuevo controlador devuelve un sobre vacío por seguridad cuando hay un error 500
+        assertInstanceOf(RespuestaResilienteDto.class, response.getBody());
+        RespuestaResilienteDto<?> cuerpo = (RespuestaResilienteDto<?>) response.getBody();
+        assertTrue(((List<?>) cuerpo.getData()).isEmpty());
 
         verify(bffService).listarCatalogoCompleto(1L);
     }

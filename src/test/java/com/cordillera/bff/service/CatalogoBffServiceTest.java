@@ -5,7 +5,7 @@ import com.cordillera.bff.client.StockClient;
 import com.cordillera.bff.dto.CatalogoDashboardDTO;
 import com.cordillera.bff.dto.ProductoResponseDTO;
 import com.cordillera.bff.dto.StockResponseDTO;
-import com.cordillera.bff.service.CatalogoBffService;
+import com.cordillera.bff.dto.RespuestaResilienteDto; // 👈 Importamos el Sobre
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -59,7 +59,7 @@ class CatalogoBffServiceTest {
         SecurityContext ctx = mock(SecurityContext.class);
         Authentication auth = mock(Authentication.class);
         when(ctx.getAuthentication()).thenReturn(auth);
-        when(auth.getPrincipal()).thenReturn("anonymousUser"); // String → no es Map
+        when(auth.getPrincipal()).thenReturn("anonymousUser");
         when(auth.getDetails()).thenReturn(null);
         SecurityContextHolder.setContext(ctx);
     }
@@ -80,8 +80,12 @@ class CatalogoBffServiceTest {
             when(productoClient.obtenerTodosLosProductos())
                     .thenReturn(List.of(buildProducto(10L, "CAFE-10", "Café Americano", 1500.0, 1L)));
 
-            List<CatalogoDashboardDTO> resultado =
+            // 📦 Recibimos el sobre
+            RespuestaResilienteDto<List<CatalogoDashboardDTO>> respuesta =
                     catalogoBffService.listarCatalogoCompleto(1L);
+
+            // 🔓 Abrimos el sobre para verificar la data
+            List<CatalogoDashboardDTO> resultado = respuesta.getData();
 
             assertThat(resultado).hasSize(1);
             CatalogoDashboardDTO item = resultado.get(0);
@@ -106,62 +110,57 @@ class CatalogoBffServiceTest {
                     buildProducto(3L, "SAND-3", "Sándwich", 2500.0, 1L)
             ));
 
-            List<CatalogoDashboardDTO> resultado =
-                    catalogoBffService.listarCatalogoCompleto(1L);
+            List<CatalogoDashboardDTO> resultado = catalogoBffService.listarCatalogoCompleto(1L).getData();
 
             assertThat(resultado).hasSize(1);
             assertThat(resultado.get(0).getId()).isEqualTo(3L);
         }
 
         @Test
-        @DisplayName("Cuando no hay match en productos, usa valores por defecto ('S/N', precio=0.0)")
-        void catalogo_productoNoEncontrado_usaValoresPorDefecto() {
+        @DisplayName("Filtro Anti-Fantasmas: Cuando no hay match en productos, excluye el stock silenciosamente")
+        void catalogo_productoNoEncontrado_filtraStockFantasma() {
             mockSecurityContextVacio();
 
             when(stockClient.obtenerStockPorSucursal(1L))
-                    .thenReturn(List.of(buildStock(99L, 3)));
+                    .thenReturn(List.of(buildStock(99L, 3))); // Producto 99 no existe
+
+            // ms-productos devuelve una lista que no incluye el producto 99
             when(productoClient.obtenerTodosLosProductos())
-                    .thenReturn(List.of()); // sin productos
+                    .thenReturn(List.of(buildProducto(1L, "SKU", "Prod", 10.0, 1L)));
 
-            List<CatalogoDashboardDTO> resultado =
-                    catalogoBffService.listarCatalogoCompleto(1L);
+            List<CatalogoDashboardDTO> resultado = catalogoBffService.listarCatalogoCompleto(1L).getData();
 
-            assertThat(resultado).hasSize(1);
-            assertThat(resultado.get(0).getSku()).isEqualTo("S/N");
-            assertThat(resultado.get(0).getPrecio()).isEqualTo(0.0);
-            assertThat(resultado.get(0).getNombreProducto())
-                    .contains("Producto Descatalogado");
+            // 🛡️ Gracias a tu nueva lógica anti-fantasmas, la lista debe estar vacía
+            assertThat(resultado).isEmpty();
         }
 
         @Test
-        @DisplayName("Retorna lista vacía si StockClient devuelve lista vacía")
+        @DisplayName("Retorna sobre vacío si StockClient devuelve lista vacía")
         void catalogo_stockVacio_retornaListaVacia() {
             mockSecurityContextVacio();
 
             when(stockClient.obtenerStockPorSucursal(1L)).thenReturn(List.of());
 
-            List<CatalogoDashboardDTO> resultado =
-                    catalogoBffService.listarCatalogoCompleto(1L);
+            List<CatalogoDashboardDTO> resultado = catalogoBffService.listarCatalogoCompleto(1L).getData();
 
             assertThat(resultado).isEmpty();
             verify(productoClient, never()).obtenerTodosLosProductos();
         }
 
         @Test
-        @DisplayName("Retorna lista vacía si StockClient devuelve null")
+        @DisplayName("Retorna sobre vacío si StockClient devuelve null")
         void catalogo_stockNull_retornaListaVacia() {
             mockSecurityContextVacio();
 
             when(stockClient.obtenerStockPorSucursal(1L)).thenReturn(null);
 
-            List<CatalogoDashboardDTO> resultado =
-                    catalogoBffService.listarCatalogoCompleto(1L);
+            List<CatalogoDashboardDTO> resultado = catalogoBffService.listarCatalogoCompleto(1L).getData();
 
             assertThat(resultado).isEmpty();
         }
 
         @Test
-        @DisplayName("Retorna lista vacía si ProductoClient lanza excepción")
+        @DisplayName("Retorna sobre vacío de caché si ProductoClient lanza excepción (Falla de Red)")
         void catalogo_productoClientFalla_retornaListaVacia() {
             mockSecurityContextVacio();
 
@@ -170,22 +169,21 @@ class CatalogoBffServiceTest {
             when(productoClient.obtenerTodosLosProductos())
                     .thenThrow(new RuntimeException("ms-productos caído"));
 
-            List<CatalogoDashboardDTO> resultado =
-                    catalogoBffService.listarCatalogoCompleto(1L);
+            RespuestaResilienteDto<List<CatalogoDashboardDTO>> respuesta = catalogoBffService.listarCatalogoCompleto(1L);
 
-            assertThat(resultado).isEmpty();
+            assertThat(respuesta.getData()).isEmpty();
+            assertThat(respuesta.isFromCache()).isFalse(); // 👈 CORREGIDO
         }
 
         @Test
-        @DisplayName("Retorna lista vacía si StockClient lanza excepción")
+        @DisplayName("Retorna sobre vacío si StockClient lanza excepción")
         void catalogo_stockClientFalla_retornaListaVacia() {
             mockSecurityContextVacio();
 
             when(stockClient.obtenerStockPorSucursal(1L))
                     .thenThrow(new RuntimeException("ms-stock caído"));
 
-            List<CatalogoDashboardDTO> resultado =
-                    catalogoBffService.listarCatalogoCompleto(1L);
+            List<CatalogoDashboardDTO> resultado = catalogoBffService.listarCatalogoCompleto(1L).getData();
 
             assertThat(resultado).isEmpty();
             verify(productoClient, never()).obtenerTodosLosProductos();
@@ -201,8 +199,7 @@ class CatalogoBffServiceTest {
             when(productoClient.obtenerTodosLosProductos())
                     .thenReturn(List.of(buildProducto(5L, "SKU-5", "Agua Mineral", 800.0, 3L)));
 
-            List<CatalogoDashboardDTO> resultado =
-                    catalogoBffService.listarCatalogoCompleto(3L); // header = 3L
+            List<CatalogoDashboardDTO> resultado = catalogoBffService.listarCatalogoCompleto(3L).getData(); // header = 3L
 
             verify(stockClient).obtenerStockPorSucursal(3L);
             assertThat(resultado).hasSize(1);
@@ -228,7 +225,6 @@ class CatalogoBffServiceTest {
             when(ctx.getAuthentication()).thenReturn(auth);
             when(auth.getPrincipal()).thenReturn("cajero@cordillera.cl");
 
-            // El details es un Map que contiene sucursalId
             Map<String, Object> details = Map.of("sucursalId", 4L, "username", "cajero@cordillera.cl");
             when(auth.getDetails()).thenReturn(details);
             SecurityContextHolder.setContext(ctx);
@@ -241,18 +237,19 @@ class CatalogoBffServiceTest {
         }
 
         @Test
-        @DisplayName("Retorna lista vacía si ProductoClient retorna null")
-        void catalogo_productosNull_retornaListaVacia() {
+        @DisplayName("Activa el Detector de Mentiras si Productos es null y hay stock")
+        void catalogo_productosNull_activaAlarma() {
             mockSecurityContextVacio();
 
             when(stockClient.obtenerStockPorSucursal(1L))
                     .thenReturn(List.of(buildStock(1L, 5)));
+
             when(productoClient.obtenerTodosLosProductos()).thenReturn(null);
 
-            List<CatalogoDashboardDTO> resultado =
-                    catalogoBffService.listarCatalogoCompleto(1L);
+            RespuestaResilienteDto<List<CatalogoDashboardDTO>> respuesta = catalogoBffService.listarCatalogoCompleto(1L);
 
-            assertThat(resultado).isEmpty();
+            assertThat(respuesta.getData()).isEmpty();
+            assertThat(respuesta.isFromCache()).isFalse(); // 👈 CORREGIDO
         }
     }
 }

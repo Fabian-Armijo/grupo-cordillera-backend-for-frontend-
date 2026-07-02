@@ -49,7 +49,10 @@ public class KpiBFFControllerTest {
         mockMvc.perform(get("/bff/kpis/dashboard")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].nombre").value("Ventas Totales"))
-                .andExpect(jsonPath("$[0].valor").value(1500000));
+                // 📦 ABRIMOS EL SOBRE: Buscamos dentro de la propiedad "data"
+                .andExpect(jsonPath("$.data[0].nombre").value("Ventas Totales"))
+                .andExpect(jsonPath("$.data[0].valor").value(1500000))
+                // 🛡️ Opcional pero recomendado: verificamos que el sobre indique que NO es caché
+                .andExpect(jsonPath("$.fromCache").value(false));
     }
 }

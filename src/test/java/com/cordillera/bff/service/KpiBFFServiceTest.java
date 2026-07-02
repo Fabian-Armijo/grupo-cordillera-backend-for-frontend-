@@ -3,9 +3,9 @@ package com.cordillera.bff.service;
 import com.cordillera.bff.client.KpiClient;
 import com.cordillera.bff.client.SucursalClient;
 import com.cordillera.bff.client.VentasClient;
+import com.cordillera.bff.dto.RespuestaResilienteDto; // 👈 Importamos el Sobre
 import com.cordillera.bff.dto.SucursalResponseDto;
 import com.cordillera.bff.dto.VentaResponseDto;
-import com.cordillera.bff.service.KpiBffService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -77,7 +77,8 @@ class KpiBffServiceTest {
                     List.of(buildVenta(10_000.0), buildVenta(5_000.0))
             );
 
-            List<Map<String, Object>> resultado = kpiBffService.getKpisForDashboard();
+            // 📦 Recibimos el sobre y lo abrimos
+            List<Map<String, Object>> resultado = kpiBffService.getKpisForDashboard().getData();
 
             assertThat(resultado).hasSize(1);
 
@@ -114,7 +115,7 @@ class KpiBffServiceTest {
             when(ventasClient.listarVentas(null, null, null))
                     .thenThrow(new RuntimeException("ms-ventas no disponible"));
 
-            List<Map<String, Object>> resultado = kpiBffService.getKpisForDashboard();
+            List<Map<String, Object>> resultado = kpiBffService.getKpisForDashboard().getData();
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> metricas =
@@ -136,7 +137,7 @@ class KpiBffServiceTest {
                     .id(2L).nombre("Sucursal Santiago Centro").build();
             when(sucursalClient.obtenerPorId(2L)).thenReturn(sucursal);
 
-            List<Map<String, Object>> resultado = kpiBffService.getKpisForDashboard();
+            List<Map<String, Object>> resultado = kpiBffService.getKpisForDashboard().getData();
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> metricas =
@@ -156,7 +157,7 @@ class KpiBffServiceTest {
             when(sucursalClient.obtenerPorId(99L))
                     .thenThrow(new RuntimeException("Sucursal no encontrada"));
 
-            List<Map<String, Object>> resultado = kpiBffService.getKpisForDashboard();
+            List<Map<String, Object>> resultado = kpiBffService.getKpisForDashboard().getData();
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> metricas =
@@ -171,12 +172,11 @@ class KpiBffServiceTest {
             Map<String, Object> defStock = buildDefinicion(3L, "Unidades Disponibles");
             Map<String, Object> metrica = new HashMap<>();
             metrica.put("valorActual", 500.0);
-            // sucursalId = null intencionalmente
 
             when(kpiClient.obtenerTodosLosKpis()).thenReturn(List.of(defStock));
             when(kpiClient.obtenerMetricasPorKpi(3L)).thenReturn(List.of(metrica));
 
-            List<Map<String, Object>> resultado = kpiBffService.getKpisForDashboard();
+            List<Map<String, Object>> resultado = kpiBffService.getKpisForDashboard().getData();
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> metricas =
@@ -187,11 +187,11 @@ class KpiBffServiceTest {
         }
 
         @Test
-        @DisplayName("Lista de definiciones vacía: retorna lista vacía sin errores")
+        @DisplayName("Lista de definiciones vacía: retorna sobre con lista vacía sin errores")
         void sinDefiniciones_retornaListaVacia() {
             when(kpiClient.obtenerTodosLosKpis()).thenReturn(List.of());
 
-            List<Map<String, Object>> resultado = kpiBffService.getKpisForDashboard();
+            List<Map<String, Object>> resultado = kpiBffService.getKpisForDashboard().getData();
 
             assertThat(resultado).isEmpty();
             verify(ventasClient, never()).listarVentas(any(), any(), any());
@@ -205,13 +205,25 @@ class KpiBffServiceTest {
             when(kpiClient.obtenerTodosLosKpis()).thenReturn(List.of(defVentas));
             when(ventasClient.listarVentas(null, null, null)).thenReturn(null);
 
-            List<Map<String, Object>> resultado = kpiBffService.getKpisForDashboard();
+            List<Map<String, Object>> resultado = kpiBffService.getKpisForDashboard().getData();
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> metricas =
                     (List<Map<String, Object>>) resultado.get(0).get("metricas");
 
             assertThat(metricas.get(0).get("valorActual")).isEqualTo(0.0);
+        }
+
+        // 🚀 NUEVA PRUEBA: Validación del Cortacircuitos
+        @Test
+        @DisplayName("KpiClient devuelve null (Caída): fuerza el rescate de caché y devuelve fromCache=false por estar vacía")
+        void kpiClientNull_rescataCacheVacia() {
+            when(kpiClient.obtenerTodosLosKpis()).thenReturn(null);
+
+            RespuestaResilienteDto<List<Map<String, Object>>> respuesta = kpiBffService.getKpisForDashboard();
+
+            assertThat(respuesta.getData()).isEmpty();
+            assertThat(respuesta.isFromCache()).isFalse(); // 👈 CORREGIDO
         }
     }
 
